@@ -94,7 +94,7 @@ e58: Problem with the local SSL certificate
 e59: Couldn't use specified SSL cipher
 e60: SSL peer certificate or SSH remote key was not OK
 e61: Unrecognized or bad HTTP Content or Transfer-Encoding
-e62: Invalid LDAP URL
+e62: Unknown error
 e63: Maximum file size exceeded
 e64: Requested SSL level failed
 e65: Send failed since rewinding of the data stream failed
@@ -108,7 +108,7 @@ e72: TFTP: Unknown transfer ID
 e73: Remote file already exists
 e74: TFTP: No such user
 e75: Conversion failed
-e76: Caller must register CURLOPT_CONV_ callback options
+e76: Unknown error
 e77: Problem with the SSL CA cert (path? access rights?)
 e78: Remote file not found
 e79: Error in the SSH layer
@@ -144,7 +144,8 @@ m7: The easy handle is already added to a multi handle
 m8: API function called from within callback
 m9: Wakeup is unavailable or failed
 m10: A libcurl function was given a bad argument
-m11: Unknown error
+m11: Operation was aborted by an application callback
+m12: Unknown error
 s0: No error
 s1: Unknown share option
 s2: Share currently in use

@@ -5,7 +5,7 @@
  *                            | (__| |_| |  _ <| |___
  *                             \___|\___/|_| \_\_____|
  *
- * Copyright (C) 1998 - 2021, Daniel Stenberg, <daniel@haxx.se>, et al.
+ * Copyright (C) 1998 - 2022, Daniel Stenberg, <daniel@haxx.se>, et al.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution. The terms
@@ -89,8 +89,6 @@
 /* libcurl's debug builds provide an extra function */
 CURLcode curl_easy_perform_ev(CURL *easy);
 #endif
-
-#define CURLseparator  "--_curl_--"
 
 #ifndef O_BINARY
 /* since O_BINARY as used in bitmasks, setting it to zero makes it usable in
@@ -264,11 +262,6 @@ static CURLcode pre_transfer(struct GlobalConfig *global,
   curl_off_t uploadfilesize = -1;
   struct_stat fileinfo;
   CURLcode result = CURLE_OK;
-
-  if(per->separator_err)
-    fprintf(global->errors, "%s\n", per->separator_err);
-  if(per->separator)
-    printf("%s\n", per->separator);
 
   if(per->uploadfile && !stdin_upload(per->uploadfile)) {
     /* VMS Note:
@@ -633,8 +626,6 @@ static CURLcode post_per_transfer(struct GlobalConfig *global,
   if(outs->alloc_filename)
     free(outs->filename);
   free(per->this_url);
-  free(per->separator_err);
-  free(per->separator);
   free(per->outfile);
   free(per->uploadfile);
 
@@ -668,15 +659,17 @@ static long url_proto(char *url)
 {
   CURLU *uh = curl_url();
   long proto = 0;
-  if(url) {
-    if(!curl_url_set(uh, CURLUPART_URL, url,
-                     CURLU_GUESS_SCHEME | CURLU_NON_SUPPORT_SCHEME)) {
-      char *schemep = NULL;
-      if(!curl_url_get(uh, CURLUPART_SCHEME, &schemep,
-                       CURLU_DEFAULT_SCHEME) &&
-         schemep) {
-        proto = scheme2protocol(schemep);
-        curl_free(schemep);
+  if(uh) {
+    if(url) {
+      if(!curl_url_set(uh, CURLUPART_URL, url,
+                       CURLU_GUESS_SCHEME | CURLU_NON_SUPPORT_SCHEME)) {
+        char *schemep = NULL;
+        if(!curl_url_get(uh, CURLUPART_SCHEME, &schemep,
+                         CURLU_DEFAULT_SCHEME) &&
+           schemep) {
+          proto = scheme2protocol(schemep);
+          curl_free(schemep);
+        }
       }
     }
     curl_url_cleanup(uh);
@@ -733,6 +726,7 @@ static CURLcode single_transfer(struct GlobalConfig *global,
   }
 
   while(config->state.urlnode) {
+    static bool warn_more_options = FALSE;
     char *infiles; /* might be a glob pattern */
     struct URLGlob *inglob = state->inglob;
     urlnode = config->state.urlnode;
@@ -747,6 +741,11 @@ static CURLcode single_transfer(struct GlobalConfig *global,
       urlnode->flags = 0;
       config->state.urlnode = urlnode->next;
       state->up = 0;
+      if(!warn_more_options) {
+        /* only show this once */
+        warnf(config->global, "Got more output options than URLs\n");
+        warn_more_options = TRUE;
+      }
       continue; /* next URL please */
     }
 
@@ -772,7 +771,6 @@ static CURLcode single_transfer(struct GlobalConfig *global,
     }
 
     {
-      int separator;
       unsigned long urlnum;
 
       if(!state->up && !infiles)
@@ -811,10 +809,6 @@ static CURLcode single_transfer(struct GlobalConfig *global,
       }
       else
         urlnum = state->urlnum;
-
-      /* if multiple files extracted to stdout, insert separators! */
-      separator = ((!state->outfiles ||
-                    !strcmp(state->outfiles, "-")) && urlnum > 1);
 
       if(state->up < state->infilenum) {
         struct per_transfer *per = NULL;
@@ -1151,14 +1145,6 @@ static CURLcode single_transfer(struct GlobalConfig *global,
           global->isatty = orig_isatty;
         }
 
-        if(urlnum > 1 && !global->mute) {
-          per->separator_err =
-            aprintf("\n[%lu/%lu]: %s --> %s",
-                    state->li + 1, urlnum, per->this_url,
-                    per->outfile ? per->outfile : "<stdout>");
-          if(separator)
-            per->separator = aprintf("%s%s", CURLseparator, per->this_url);
-        }
         if(httpgetfields) {
           char *urlbuffer;
           /* Find out whether the url contains a file name */

@@ -9,7 +9,7 @@ check that it adheres to our [Source Code Style guide](CODE_STYLE.md).
 
 ## Command line options
 
-`-W[file]` skip that file and excludes it from being checked. Helpful
+`-W[file]` skip that file and exclude it from being checked. Helpful
 when, for example, one of the files is generated.
 
 `-D[dir]` directory name to prepend to file names when accessing them.
@@ -18,11 +18,11 @@ when, for example, one of the files is generated.
 
 ## What does checksrc warn for?
 
-checksrc does not check and verify the code against the entire style guide,
-but the script is instead an effort to detect the most common mistakes and
-syntax mistakes that contributors make before they get accustomed to our code
-style. Heck, many of us regulars do the mistakes too and this script helps us
-keep the code in shape.
+checksrc does not check and verify the code against the entire style guide.
+The script is an effort to detect the most common mistakes and syntax mistakes
+that contributors make before they get accustomed to our code style. Heck,
+many of us regulars do the mistakes too and this script helps us keep the code
+in shape.
 
     checksrc.pl -h
 

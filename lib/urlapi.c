@@ -5,7 +5,7 @@
  *                            | (__| |_| |  _ <| |___
  *                             \___|\___/|_| \_\_____|
  *
- * Copyright (C) 1998 - 2021, Daniel Stenberg, <daniel@haxx.se>, et al.
+ * Copyright (C) 1998 - 2022, Daniel Stenberg, <daniel@haxx.se>, et al.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution. The terms
@@ -30,6 +30,7 @@
 #include "escape.h"
 #include "curl_ctype.h"
 #include "inet_pton.h"
+#include "inet_ntop.h"
 
 /* The last 3 #include files should be in this order */
 #include "curl_printf.h"
@@ -87,16 +88,6 @@ static void free_urlhandle(struct Curl_URL *u)
   free(u->fragment);
   free(u->scratch);
   free(u->temppath);
-}
-
-/* move the full contents of one handle onto another and
-   free the original */
-static void mv_urlhandle(struct Curl_URL *from,
-                         struct Curl_URL *to)
-{
-  free_urlhandle(to);
-  *to = *from;
-  free(from);
 }
 
 /*
@@ -605,9 +596,7 @@ UNITTEST CURLUcode Curl_parse_port(struct Curl_URL *u, char *hostname,
 
     port = strtol(portptr + 1, &rest, 10);  /* Port number must be decimal */
 
-    if((port <= 0) || (port > 0xffff))
-      /* Single unix standard says port numbers are 16 bits long, but we don't
-         treat port zero as OK. */
+    if(port > 0xffff)
       return CURLUE_BAD_PORT_NUMBER;
 
     if(rest[0])
@@ -632,9 +621,6 @@ static CURLUcode hostname_check(struct Curl_URL *u, char *hostname)
   size_t hlen = strlen(hostname);
 
   if(hostname[0] == '[') {
-#ifdef ENABLE_IPV6
-    char dest[16]; /* fits a binary IPv6 address */
-#endif
     const char *l = "0123456789abcdefABCDEF:.";
     if(hlen < 4) /* '[::]' is the shortest possible valid string */
       return CURLUE_BAD_IPV6;
@@ -673,10 +659,22 @@ static CURLUcode hostname_check(struct Curl_URL *u, char *hostname)
       /* hostname is fine */
     }
 #ifdef ENABLE_IPV6
-    hostname[hlen] = 0; /* end the address there */
-    if(1 != Curl_inet_pton(AF_INET6, hostname, dest))
-      return CURLUE_BAD_IPV6;
-    hostname[hlen] = ']'; /* restore ending bracket */
+    {
+      char dest[16]; /* fits a binary IPv6 address */
+      char norm[MAX_IPADR_LEN];
+      hostname[hlen] = 0; /* end the address there */
+      if(1 != Curl_inet_pton(AF_INET6, hostname, dest))
+        return CURLUE_BAD_IPV6;
+
+      /* check if it can be done shorter */
+      if(Curl_inet_ntop(AF_INET6, dest, norm, sizeof(norm)) &&
+         (strlen(norm) < hlen)) {
+        strcpy(hostname, norm);
+        hlen = strlen(norm);
+        hostname[hlen + 1] = 0;
+      }
+      hostname[hlen] = ']'; /* restore ending bracket */
+    }
 #endif
   }
   else {
@@ -796,8 +794,7 @@ static CURLUcode decode_host(char *hostname, char **outp)
   else {
     /* might be encoded */
     size_t dlen;
-    CURLcode result = Curl_urldecode(NULL, hostname, 0,
-                                     outp, &dlen, REJECT_CTRL);
+    CURLcode result = Curl_urldecode(hostname, 0, outp, &dlen, REJECT_CTRL);
     if(result)
       return CURLUE_BAD_HOSTNAME;
   }
@@ -997,9 +994,7 @@ static CURLUcode seturl(const char *url, CURLU *u, unsigned int flags)
         return CURLUE_NO_HOST;
     }
 
-    len = strlen(p);
-    memcpy(path, p, len);
-    path[len] = 0;
+    strcpy(path, p);
 
     if(schemep) {
       u->scheme = strdup(schemep);
@@ -1145,6 +1140,25 @@ static CURLUcode parseurl(const char *url, CURLU *u, unsigned int flags)
     free_urlhandle(u);
     memset(u, 0, sizeof(struct Curl_URL));
   }
+  return result;
+}
+
+/*
+ * Parse the URL and, if successful, replace everyting in the Curl_URL struct.
+ */
+static CURLUcode parseurl_and_replace(const char *url, CURLU *u,
+                                      unsigned int flags)
+{
+  CURLUcode result;
+  CURLU tmpurl;
+  memset(&tmpurl, 0, sizeof(tmpurl));
+  result = parseurl(url, &tmpurl, flags);
+  if(!result) {
+    free_urlhandle(u);
+    *u = tmpurl;
+  }
+  else
+    free_urlhandle(&tmpurl);
   return result;
 }
 
@@ -1414,8 +1428,7 @@ CURLUcode curl_url_get(CURLU *u, CURLUPart what,
       size_t dlen;
       /* this unconditional rejection of control bytes is documented
          API behavior */
-      CURLcode res = Curl_urldecode(NULL, *part, 0, &decoded, &dlen,
-                                    REJECT_CTRL);
+      CURLcode res = Curl_urldecode(*part, 0, &decoded, &dlen, REJECT_CTRL);
       free(*part);
       if(res) {
         *part = NULL;
@@ -1556,52 +1569,24 @@ CURLUcode curl_url_set(CURLU *u, CURLUPart what,
     CURLUcode result;
     char *oldurl;
     char *redired_url;
-    CURLU *handle2;
 
-    if(Curl_is_absolute_url(part, NULL, 0)) {
-      handle2 = curl_url();
-      if(!handle2)
-        return CURLUE_OUT_OF_MEMORY;
-      result = parseurl(part, handle2, flags);
-      if(!result)
-        mv_urlhandle(handle2, u);
-      else
-        curl_url_cleanup(handle2);
-      return result;
-    }
-    /* extract the full "old" URL to do the redirect on */
-    result = curl_url_get(u, CURLUPART_URL, &oldurl, flags);
-    if(result) {
-      /* couldn't get the old URL, just use the new! */
-      handle2 = curl_url();
-      if(!handle2)
-        return CURLUE_OUT_OF_MEMORY;
-      result = parseurl(part, handle2, flags);
-      if(!result)
-        mv_urlhandle(handle2, u);
-      else
-        curl_url_cleanup(handle2);
-      return result;
+    /* if the new thing is absolute or the old one is not
+     * (we could not get an absolute url in 'oldurl'),
+     * then replace the existing with the new. */
+    if(Curl_is_absolute_url(part, NULL, 0)
+       || curl_url_get(u, CURLUPART_URL, &oldurl, flags)) {
+      return parseurl_and_replace(part, u, flags);
     }
 
-    /* apply the relative part to create a new URL */
+    /* apply the relative part to create a new URL
+     * and replace the existing one with it. */
     redired_url = concat_url(oldurl, part);
     free(oldurl);
     if(!redired_url)
       return CURLUE_OUT_OF_MEMORY;
 
-    /* now parse the new URL */
-    handle2 = curl_url();
-    if(!handle2) {
-      free(redired_url);
-      return CURLUE_OUT_OF_MEMORY;
-    }
-    result = parseurl(redired_url, handle2, flags);
+    result = parseurl_and_replace(redired_url, u, flags);
     free(redired_url);
-    if(!result)
-      mv_urlhandle(handle2, u);
-    else
-      curl_url_cleanup(handle2);
     return result;
   }
   default:
